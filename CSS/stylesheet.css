@@ -1,0 +1,129 @@
+*{
+    margin: 0px; 
+    padding: 0px;
+    box-sizing: border-box;
+}
+
+
+h1, h2, h3, h4, h5, p{
+ 
+  font-family: 'Source Sans Pro', sans-serif; 
+  font-family: 'Open Sans', sans-serif;
+}
+
+.navbar  li > a{ 
+  font-family: 'Open Sans', sans-serif;
+}
+
+
+
+ #Main{
+    background-image: url(../Images/lilypads.png) ;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position:  center;
+    background-attachment: fixed;
+  }
+
+
+  .background{
+    background-image: url(../Images/lilypads.png) ;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position:  center;
+    background-attachment: fixed;
+  }
+
+
+
+  .Character-Image{
+    border-radius: 50%;
+    padding: 1px;
+    border: 8px solid transparent;
+    background: linear-gradient(60deg, #f1f6f9 10%, #F1F6F9 100%);
+  }
+
+ 
+  .navbar{
+    background: rgba(0, 0, 0, 0.8);
+  }
+
+ .navbar-nav > li{
+
+    padding-left:30px;
+    padding-right:30px;
+  }
+
+  .carousel-item{
+    height:32rem;
+    background:#777;
+    color:black;
+    position: relative;
+    background-position:center;
+    background-size:cover;
+  } 
+  
+  .carousel-caption h1 {
+    text-shadow: #373a40  1px 0 10px;
+  }
+
+  .carousel-caption p {
+    text-shadow: #373a40  1px 0 10px;
+  }
+
+
+  .overlay-image-Patch{
+    background-image: url(../Images/Genshin\ 1.1.png) ;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: 0;
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    opacity: 80%;
+  }
+
+  
+  .overlay-image-Zhongli{
+    background-image: url(../Images/Zhongli\ banner.png) ;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: 0;
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    opacity: 80%;
+}
+
+
+  .overlay-image-Childe{
+    background-image: url(../Images/Tartaglia\ banner.png) ;
+     position: absolute;
+     bottom: 0;
+     left: 0;
+     right: 0;
+     top: 0;
+     background-position: center;
+     background-size: cover;
+     background-repeat: no-repeat;
+     opacity: 80%;
+  } 
+
+
+
+ 
+  hr{
+    background: white;	
+  }
+
+  .contact-form{
+   background:rgba(0,0,0, .6);
+   color:white;
+   margin-top: 100px;
+  padding: 20px;
+   box-shadow: 0px 0px 10px 3px grey;
+}
