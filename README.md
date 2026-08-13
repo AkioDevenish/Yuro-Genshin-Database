@@ -34,6 +34,8 @@ Neon or Supabase database.
 - Highest-value items
 
 **Administration**
+- First-run setup: an empty database creates its own tables and walks you through making the
+  first administrator in the browser, then locks that screen for good
 - User accounts with four access levels
 - Password resets, account disabling and deletion
 - The system refuses to leave itself without an active administrator
@@ -56,6 +58,23 @@ the only defence.
 
 The matrix lives in one place — `src/lib/roles.ts`. Adding a role or a permission means editing
 that file and nothing else.
+
+---
+
+## Run it in your browser (no install)
+
+The repository ships a dev container, so **GitHub Codespaces** gives you a running system
+without installing anything — it works from a phone as well as a laptop.
+
+On the repository page: **Code → Codespaces → Create codespace on main**.
+
+The codespace starts PostgreSQL alongside the app, installs dependencies, creates the tables and
+loads a demo catalogue automatically. When it finishes, port 3000 is forwarded and opens in a new
+tab. Sign in with any of the demo accounts below — they each have a different access level, which
+is the quickest way to see the permission system working.
+
+Codespaces is free for personal accounts (60 core-hours a month). Stop the codespace when you are
+finished so it does not keep consuming hours.
 
 ---
 
@@ -137,12 +156,16 @@ app throws on startup if `AUTH_SECRET` is missing — this is deliberate.
    `DATABASE_URL` under **Settings → Environment Variables**.
 3. Add `AUTH_SECRET` as an environment variable (`openssl rand -hex 32`).
 4. Deploy.
-5. Create the tables and your administrator account by running the seed once against the same
-   database from your own machine:
+5. Open the deployed URL. The app creates its own tables on first load and shows a **first-run
+   setup** screen where you create the administrator account in the browser — no terminal needed.
+   Once that account exists the setup screen permanently redirects to the sign-in page.
+
+   If you would rather load the demo catalogue as well, run the seed from a machine with Node
+   instead:
 
    ```bash
    DATABASE_URL='<the same connection string>' \
-   ADMIN_EMAIL=you@iica.org ADMIN_PASSWORD='a strong password' npm run seed
+   ADMIN_EMAIL=you@iica.org ADMIN_PASSWORD='a strong password' npm run seed -- --demo
    ```
 
 Use the **pooled** connection string on Vercel — Neon's `-pooler` host, or Supabase port `6543`.
@@ -192,7 +215,9 @@ src/
     queries.ts           Every read query
     password.ts          scrypt hashing
     session.ts           Signed session cookies
+    setup.ts             Schema creation and the first-run check
 scripts/seed.mjs         Schema creation, first administrator, demo data
+.devcontainer/           Codespaces: PostgreSQL, install, seed and launch
 ```
 
 ## Security notes
