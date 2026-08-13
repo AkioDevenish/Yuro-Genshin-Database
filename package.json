@@ -1,0 +1,31 @@
+{
+  "name": "iica-inventory",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IICA Inventory Management System",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "seed": "node scripts/seed.mjs",
+    "db:setup": "node scripts/seed.mjs"
+  },
+  "dependencies": {
+    "jose": "^6.0.11",
+    "lucide-react": "^1.31.0",
+    "next": "^16.3.0",
+    "postgres": "^3.4.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.8",
+    "@types/node": "^22.15.29",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5.8.3"
+  }
+}
