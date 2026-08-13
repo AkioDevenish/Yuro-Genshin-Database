@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /**
- * Creates the database, the first administrator and (optionally) a set of
+ * Creates the schema, the first administrator and (optionally) a set of
  * realistic demo records so the system is not empty on the first sign-in.
  *
- *   npm run seed                       → admin only
- *   npm run seed -- --demo             → admin + demo catalogue
- *   npm run seed -- --reset --demo     → wipe and rebuild everything
+ *   npm run seed                       → schema + administrator
+ *   npm run seed -- --demo             → also loads a demo catalogue
+ *   npm run seed -- --reset --demo     → drops every table and rebuilds
  *
- * Credentials can be supplied with ADMIN_EMAIL / ADMIN_PASSWORD / ADMIN_NAME.
+ * Reads DATABASE_URL (or POSTGRES_URL). Credentials can be supplied with
+ * ADMIN_EMAIL / ADMIN_PASSWORD / ADMIN_NAME.
  */
-import Database from "better-sqlite3";
+import postgres from "postgres";
 import { randomBytes, scrypt } from "node:crypto";
 import { promisify } from "node:util";
 import fs from "node:fs";
@@ -22,14 +23,71 @@ const args = new Set(process.argv.slice(2));
 const withDemo = args.has("--demo");
 const reset = args.has("--reset");
 
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "inventory.db");
+loadEnvFiles();
+
+const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+if (!DATABASE_URL) {
+  console.error(
+    "\nDATABASE_URL is not set.\n\n" +
+      "Create .env.local with a line like:\n" +
+      "  DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require\n\n" +
+      "Free PostgreSQL hosting: neon.tech or supabase.com\n",
+  );
+  process.exit(1);
+}
 
 const ADMIN_NAME = process.env.ADMIN_NAME || "IICA Administrator";
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@iica.org").toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "ChangeMe123";
+
+const sql = postgres(DATABASE_URL, { prepare: false, onnotice: () => {} });
+
+try {
+  await main();
+} catch (error) {
+  console.error("\nSeed failed:", error.message);
+  process.exitCode = 1;
+} finally {
+  await sql.end();
+}
+
+async function main() {
+  if (reset) {
+    await sql.unsafe(`
+      DROP TABLE IF EXISTS audit_logs, movements, items, categories, locations, users CASCADE;
+    `);
+    console.log("• Existing tables dropped");
+  }
+
+  await sql.unsafe(SCHEMA_SQL);
+  console.log("• Schema is up to date");
+
+  const [existing] = await sql`SELECT id FROM users WHERE lower(email) = ${ADMIN_EMAIL}`;
+
+  let adminId;
+  if (existing) {
+    adminId = existing.id;
+    console.log(`• Administrator ${ADMIN_EMAIL} already exists — left untouched`);
+  } else {
+    const [row] = await sql`
+      INSERT INTO users (name, email, password_hash, role, status)
+      VALUES (${ADMIN_NAME}, ${ADMIN_EMAIL}, ${await hash(ADMIN_PASSWORD)}, 'ADMIN', 'ACTIVE')
+      RETURNING id`;
+    adminId = row.id;
+    console.log(`• Administrator created: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+  }
+
+  if (withDemo) {
+    const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM items`;
+    if (count > 0) {
+      console.log("• Demo data skipped — the catalogue already has items");
+    } else {
+      await seedDemo(adminId);
+    }
+  }
+
+  console.log("\nDone. Start the app with `npm run dev` and sign in.");
+}
 
 async function hash(password) {
   const salt = randomBytes(16);
@@ -37,64 +95,35 @@ async function hash(password) {
   return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
 }
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-if (reset) {
-  for (const suffix of ["", "-wal", "-shm"]) {
-    fs.rmSync(`${DB_FILE}${suffix}`, { force: true });
-  }
-  console.log("• Existing database removed");
-}
-
-const db = new Database(DB_FILE);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-db.exec(SCHEMA_SQL);
-
-const existingAdmin = db
-  .prepare("SELECT id FROM users WHERE lower(email) = ?")
-  .get(ADMIN_EMAIL);
-
-let adminId;
-if (existingAdmin) {
-  adminId = existingAdmin.id;
-  console.log(`• Administrator ${ADMIN_EMAIL} already exists — left untouched`);
-} else {
-  const info = db
-    .prepare(
-      "INSERT INTO users (name, email, password_hash, role, status) VALUES (?, ?, ?, 'ADMIN', 'ACTIVE')",
-    )
-    .run(ADMIN_NAME, ADMIN_EMAIL, await hash(ADMIN_PASSWORD));
-  adminId = Number(info.lastInsertRowid);
-  console.log(`• Administrator created: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
-}
-
-if (withDemo) {
-  const itemCount = db.prepare("SELECT COUNT(*) AS n FROM items").get().n;
-  if (itemCount > 0) {
-    console.log("• Demo data skipped — the catalogue already has items");
-  } else {
-    await seedDemo();
+/** Next.js loads .env files for the app; this script has to do it itself. */
+function loadEnvFiles() {
+  for (const file of [".env.local", ".env"]) {
+    const full = path.join(process.cwd(), file);
+    if (!fs.existsSync(full)) continue;
+    for (const line of fs.readFileSync(full, "utf8").split("\n")) {
+      const match = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/i);
+      if (!match) continue;
+      const [, key, rawValue] = match;
+      if (process.env[key] !== undefined) continue;
+      process.env[key] = rawValue.replace(/^["'](.*)["']$/, "$1").trim();
+    }
   }
 }
 
-db.close();
-console.log("\nDone. Start the app with `npm run dev` and sign in.");
-
-async function seedDemo() {
+async function seedDemo(adminId) {
   const people = [
     ["Marisol Rivera", "marisol.rivera@iica.org", "MANAGER", "Manager123"],
     ["Daniel Okoye", "daniel.okoye@iica.org", "STAFF", "Staff12345"],
     ["Priya Raman", "priya.raman@iica.org", "VIEWER", "Viewer1234"],
   ];
 
-  const insertUser = db.prepare(
-    "INSERT INTO users (name, email, password_hash, role, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
-  );
   const userIds = {};
   for (const [name, email, role, password] of people) {
-    const info = insertUser.run(name, email, await hash(password), role);
-    userIds[role] = Number(info.lastInsertRowid);
+    const [row] = await sql`
+      INSERT INTO users (name, email, password_hash, role, status)
+      VALUES (${name}, ${email}, ${await hash(password)}, ${role}, 'ACTIVE')
+      RETURNING id`;
+    userIds[role] = row.id;
     console.log(`• Demo user: ${email} / ${password} (${role})`);
   }
 
@@ -112,15 +141,23 @@ async function seedDemo() {
     ["Field station A", "On-site container store."],
   ];
 
-  const insertCategory = db.prepare("INSERT INTO categories (name, description) VALUES (?, ?)");
-  const insertLocation = db.prepare("INSERT INTO locations (name, description) VALUES (?, ?)");
-  const categoryIds = categories.map(([n, d]) => Number(insertCategory.run(n, d).lastInsertRowid));
-  const locationIds = locations.map(([n, d]) => Number(insertLocation.run(n, d).lastInsertRowid));
+  const categoryIds = [];
+  for (const [name, description] of categories) {
+    const [row] = await sql`
+      INSERT INTO categories (name, description) VALUES (${name}, ${description}) RETURNING id`;
+    categoryIds.push(row.id);
+  }
+  const locationIds = [];
+  for (const [name, description] of locations) {
+    const [row] = await sql`
+      INSERT INTO locations (name, description) VALUES (${name}, ${description}) RETURNING id`;
+    locationIds.push(row.id);
+  }
 
   //     sku,  name, category, location, unit, qty, min, cost, supplier
   const items = [
     ["IICA-IT-0001", "Laptop — Dell Latitude 5440", 0, 1, "unit", 24, 6, 1180, "Tech Supplies Ltd"],
-    ["IICA-IT-0002", "Monitor — 24\" IPS", 0, 1, "unit", 31, 8, 210, "Tech Supplies Ltd"],
+    ["IICA-IT-0002", 'Monitor — 24" IPS', 0, 1, "unit", 31, 8, 210, "Tech Supplies Ltd"],
     ["IICA-IT-0003", "Wireless mouse", 0, 1, "unit", 12, 15, 18.5, "Tech Supplies Ltd"],
     ["IICA-IT-0004", "Network switch — 24 port", 0, 1, "unit", 3, 2, 340, "NetCore"],
     ["IICA-IT-0005", "USB-C docking station", 0, 1, "unit", 0, 4, 165, "Tech Supplies Ltd"],
@@ -141,77 +178,56 @@ async function seedDemo() {
     ["IICA-IT-0006", "Projector — 4000 lumen", 0, 1, "unit", 2, 1, 690, "Tech Supplies Ltd"],
   ];
 
-  const insertItem = db.prepare(
-    `INSERT INTO items (sku, name, category_id, location_id, unit, quantity, min_quantity, unit_cost, supplier)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const insertMovement = db.prepare(
-    `INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now', ?))`,
-  );
-
   const notes = {
     IN: ["Supplier delivery", "Purchase order fulfilled", "Returned from project", "Restock"],
-    OUT: ["Issued to field team", "Assigned to new staff member", "Project requisition", "Replacement issued"],
-    ADJUST: ["Physical count correction", "Damaged units written off", "Stocktake adjustment"],
+    OUT: [
+      "Issued to field team",
+      "Assigned to new staff member",
+      "Project requisition",
+      "Replacement issued",
+    ],
   };
 
   const staffIds = [userIds.MANAGER, userIds.STAFF, adminId];
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
-  db.transaction(() => {
-    for (const [sku, name, cat, loc, unit, qty, min, cost, supplier] of items) {
-      const itemId = Number(
-        insertItem.run(sku, name, categoryIds[cat], locationIds[loc], unit, qty, min, cost, supplier)
-          .lastInsertRowid,
-      );
+  for (const [sku, name, cat, loc, unit, qty, min, cost, supplier] of items) {
+    const [item] = await sql`
+      INSERT INTO items (sku, name, category_id, location_id, unit, quantity, min_quantity,
+                         unit_cost, supplier)
+      VALUES (${sku}, ${name}, ${categoryIds[cat]}, ${locationIds[loc]}, ${unit}, ${qty}, ${min},
+              ${cost}, ${supplier})
+      RETURNING id`;
 
-      // Build a plausible 21-day history that lands exactly on the current quantity.
-      const steps = [];
-      let balance = qty;
-      for (let day = 1; day <= 6; day++) {
-        const type = Math.random() < 0.55 ? "IN" : "OUT";
-        const size = Math.max(1, Math.round(Math.max(qty, 4) * (0.05 + Math.random() * 0.2)));
-        steps.push({ type, size, daysAgo: day * 3 + Math.floor(Math.random() * 3) });
-      }
-
-      // Walk backwards from today so the ledger reconciles with the stored quantity.
-      const rows = [];
-      for (const step of steps) {
-        const before = step.type === "IN" ? balance - step.size : balance + step.size;
-        if (before < 0) continue;
-        rows.push({ ...step, balanceAfter: balance });
-        balance = before;
-      }
-
-      insertMovement.run(
-        itemId,
-        pick(staffIds),
-        "IN",
-        balance,
-        balance,
-        "Opening balance",
-        `-${45 + Math.floor(Math.random() * 40)} days`,
-      );
-
-      for (const row of rows.reverse()) {
-        insertMovement.run(
-          itemId,
-          pick(staffIds),
-          row.type,
-          row.size,
-          row.balanceAfter,
-          pick(notes[row.type]),
-          `-${row.daysAgo} days`,
-        );
-      }
+    // Walk backwards from the current quantity so the ledger reconciles exactly.
+    let balance = qty;
+    const rows = [];
+    for (let step = 1; step <= 6; step++) {
+      const type = Math.random() < 0.55 ? "IN" : "OUT";
+      const size = Math.max(1, Math.round(Math.max(qty, 4) * (0.05 + Math.random() * 0.2)));
+      const before = type === "IN" ? balance - size : balance + size;
+      if (before < 0) continue;
+      rows.push({ type, size, balanceAfter: balance, daysAgo: step * 3 + Math.floor(Math.random() * 3) });
+      balance = before;
     }
 
-    db.prepare(
-      `INSERT INTO audit_logs (user_id, user_label, action, entity, details)
-       VALUES (?, ?, 'SEED', 'system', 'Demo catalogue generated')`,
-    ).run(adminId, `${ADMIN_NAME} <${ADMIN_EMAIL}>`);
-  })();
+    await sql`
+      INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note, created_at)
+      VALUES (${item.id}, ${pick(staffIds)}, 'IN', ${balance}, ${balance}, 'Opening balance',
+              now() - make_interval(days => ${45 + Math.floor(Math.random() * 40)}))`;
+
+    for (const row of rows.reverse()) {
+      await sql`
+        INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note, created_at)
+        VALUES (${item.id}, ${pick(staffIds)}, ${row.type}, ${row.size}, ${row.balanceAfter},
+                ${pick(notes[row.type])}, now() - make_interval(days => ${row.daysAgo}))`;
+    }
+  }
+
+  await sql`
+    INSERT INTO audit_logs (user_id, user_label, action, entity, details)
+    VALUES (${adminId}, ${`${ADMIN_NAME} <${ADMIN_EMAIL}>`}, 'SEED', 'system',
+            'Demo catalogue generated')`;
 
   console.log(`• Demo catalogue created: ${items.length} items with movement history`);
 }

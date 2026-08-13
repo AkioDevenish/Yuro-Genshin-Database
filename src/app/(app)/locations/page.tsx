@@ -19,7 +19,7 @@ export default async function LocationsPage() {
       <TaxonomyManager
         kind="location"
         noun="Location"
-        entries={listLocations()}
+        entries={await listLocations()}
         canManage={can(user.role, "taxonomy.manage")}
       />
     </>

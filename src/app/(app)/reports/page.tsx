@@ -16,11 +16,11 @@ export const metadata = { title: "Reports" };
 export default async function ReportsPage() {
   await requirePermission("reports.view");
 
-  const stats = dashboardStats();
-  const byCategory = stockByCategory();
-  const byLocation = stockByLocation();
-  const trend = movementTrend(30);
-  const topValue = listItems({ sort: "value" }).slice(0, 10);
+  const stats = await dashboardStats();
+  const byCategory = await stockByCategory();
+  const byLocation = await stockByLocation();
+  const trend = await movementTrend(30);
+  const topValue = (await listItems({ sort: "value" })).slice(0, 10);
 
   const maxCategory = Math.max(1, ...byCategory.map((r) => r.value));
   const maxLocation = Math.max(1, ...byLocation.map((r) => r.value));

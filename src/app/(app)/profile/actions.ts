@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
-import { db } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { requireUser, recordAudit } from "@/lib/auth";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/password";
 import { SESSION_COOKIE, sessionCookieOptions, signSession } from "@/lib/session";
@@ -17,7 +17,7 @@ export async function updateProfileAction(
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { error: "Enter your name." };
 
-  db.prepare("UPDATE users SET name = ? WHERE id = ?").run(name, user.userId);
+  await sql`UPDATE users SET name = ${name} WHERE id = ${user.userId}`;
 
   // Refresh the cookie so the sidebar shows the new name straight away.
   const store = await cookies();
@@ -27,7 +27,7 @@ export async function updateProfileAction(
     sessionCookieOptions,
   );
 
-  recordAudit({ user, action: "UPDATE", entity: "profile", entityId: user.userId });
+  await recordAudit({ user, action: "UPDATE", entity: "profile", entityId: user.userId });
   revalidatePath("/profile");
   return { message: "Your details were saved." };
 }
@@ -41,9 +41,8 @@ export async function changePasswordAction(
   const next = String(formData.get("new_password") ?? "");
   const confirm = String(formData.get("confirm_password") ?? "");
 
-  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(user.userId) as
-    | { password_hash: string }
-    | undefined;
+  const [row] = await sql<{ password_hash: string }[]>`
+    SELECT password_hash FROM users WHERE id = ${user.userId}`;
   if (!row) return { error: "Your account could not be found." };
 
   if (!(await verifyPassword(current, row.password_hash))) {
@@ -54,11 +53,8 @@ export async function changePasswordAction(
   const problem = passwordProblem(next);
   if (problem) return { error: problem };
 
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
-    await hashPassword(next),
-    user.userId,
-  );
+  await sql`UPDATE users SET password_hash = ${await hashPassword(next)} WHERE id = ${user.userId}`;
 
-  recordAudit({ user, action: "CHANGE_PASSWORD", entity: "profile", entityId: user.userId });
+  await recordAudit({ user, action: "CHANGE_PASSWORD", entity: "profile", entityId: user.userId });
   return { message: "Your password was changed." };
 }

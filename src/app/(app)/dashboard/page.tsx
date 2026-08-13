@@ -34,11 +34,11 @@ export const metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   const user = await requirePermission("inventory.view");
-  const stats = dashboardStats();
-  const lowStock = lowStockItems(6);
-  const recent = listMovements({ limit: 8 });
-  const byCategory = stockByCategory().slice(0, 6);
-  const trend = movementTrend(14);
+  const stats = await dashboardStats();
+  const lowStock = await lowStockItems(6);
+  const recent = await listMovements({ limit: 8 });
+  const byCategory = (await stockByCategory()).slice(0, 6);
+  const trend = await movementTrend(14);
   const maxCategoryValue = Math.max(1, ...byCategory.map((c) => c.value));
 
   const hour = new Date().getHours();

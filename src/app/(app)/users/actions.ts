@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { assertPermission, recordAudit } from "@/lib/auth";
 import { hashPassword, passwordProblem } from "@/lib/password";
 import { isRole, type Role } from "@/lib/roles";
@@ -28,11 +28,11 @@ export async function createUserAction(_prev: UserState, formData: FormData): Pr
     const problem = passwordProblem(password);
     if (problem) return { error: problem };
 
-    db.prepare(
-      "INSERT INTO users (name, email, password_hash, role, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
-    ).run(name, email, await hashPassword(password), role);
+    await sql`
+      INSERT INTO users (name, email, password_hash, role, status)
+      VALUES (${name}, ${email}, ${await hashPassword(password)}, ${role}, 'ACTIVE')`;
 
-    recordAudit({
+    await recordAudit({
       user: admin,
       action: "CREATE",
       entity: "user",
@@ -42,11 +42,10 @@ export async function createUserAction(_prev: UserState, formData: FormData): Pr
     revalidatePath("/users");
     return { ok: true, message: `${name} can now sign in.` };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("UNIQUE constraint failed")) {
+    if ((error as { code?: string })?.code === "23505") {
       return { error: "An account already uses that email address." };
     }
-    return { error: message || "Could not create the account." };
+    return { error: error instanceof Error ? error.message : "Could not create the account." };
   }
 }
 
@@ -66,33 +65,25 @@ export async function updateUserAction(_prev: UserState, formData: FormData): Pr
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "Enter a valid email address." };
     if (!isRole(role)) return { error: "Choose a role." };
 
-    const target = db.prepare("SELECT id, role, status FROM users WHERE id = ?").get(id) as
-      | { id: number; role: Role; status: string }
-      | undefined;
+    const [target] = await sql<{ id: number; role: Role; status: string }[]>`
+      SELECT id, role, status FROM users WHERE id = ${id}`;
     if (!target) return { error: "That account no longer exists." };
 
-    const guard = lastAdminGuard(target, role, status, admin.userId === id);
+    const guard = await lastAdminGuard(target, role, status, admin.userId === id);
     if (guard) return { error: guard };
 
     if (password) {
       const problem = passwordProblem(password);
       if (problem) return { error: problem };
-      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
-        await hashPassword(password),
-        id,
-      );
-      recordAudit({ user: admin, action: "RESET_PASSWORD", entity: "user", entityId: id });
+      await sql`UPDATE users SET password_hash = ${await hashPassword(password)} WHERE id = ${id}`;
+      await recordAudit({ user: admin, action: "RESET_PASSWORD", entity: "user", entityId: id });
     }
 
-    db.prepare("UPDATE users SET name = ?, email = ?, role = ?, status = ? WHERE id = ?").run(
-      name,
-      email,
-      role,
-      status,
-      id,
-    );
+    await sql`
+      UPDATE users SET name = ${name}, email = ${email}, role = ${role}, status = ${status}
+      WHERE id = ${id}`;
 
-    recordAudit({
+    await recordAudit({
       user: admin,
       action: "UPDATE",
       entity: "user",
@@ -103,11 +94,10 @@ export async function updateUserAction(_prev: UserState, formData: FormData): Pr
     revalidatePath("/users");
     return { ok: true, message: "Account updated." };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("UNIQUE constraint failed")) {
+    if ((error as { code?: string })?.code === "23505") {
       return { error: "An account already uses that email address." };
     }
-    return { error: message || "Could not update the account." };
+    return { error: error instanceof Error ? error.message : "Could not update the account." };
   }
 }
 
@@ -118,19 +108,18 @@ export async function deleteUserAction(_prev: UserState, formData: FormData): Pr
     if (!id) return { error: "Missing account reference." };
     if (id === admin.userId) return { error: "You cannot delete your own account." };
 
-    const target = db.prepare("SELECT name, email, role FROM users WHERE id = ?").get(id) as
-      | { name: string; email: string; role: Role }
-      | undefined;
+    const [target] = await sql<{ name: string; email: string; role: Role }[]>`
+      SELECT name, email, role FROM users WHERE id = ${id}`;
     if (!target) return { ok: true };
 
-    if (target.role === "ADMIN" && activeAdminCount() <= 1) {
+    if (target.role === "ADMIN" && (await activeAdminCount()) <= 1) {
       return { error: "This is the last active administrator — promote someone else first." };
     }
 
     // Movements keep their history; the schema nulls the user reference.
-    db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    await sql`DELETE FROM users WHERE id = ${id}`;
 
-    recordAudit({
+    await recordAudit({
       user: admin,
       action: "DELETE",
       entity: "user",
@@ -145,23 +134,22 @@ export async function deleteUserAction(_prev: UserState, formData: FormData): Pr
   }
 }
 
-function activeAdminCount(): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'ADMIN' AND status = 'ACTIVE'")
-    .get() as { n: number };
+async function activeAdminCount(): Promise<number> {
+  const [row] = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int AS n FROM users WHERE role = 'ADMIN' AND status = 'ACTIVE'`;
   return row.n;
 }
 
 /** Stops the organisation from locking itself out of the system. */
-function lastAdminGuard(
+async function lastAdminGuard(
   target: { role: Role; status: string },
   nextRole: Role,
   nextStatus: string,
   isSelf: boolean,
-): string | null {
+): Promise<string | null> {
   const wasActiveAdmin = target.role === "ADMIN" && target.status === "ACTIVE";
   const staysActiveAdmin = nextRole === "ADMIN" && nextStatus === "ACTIVE";
-  if (wasActiveAdmin && !staysActiveAdmin && activeAdminCount() <= 1) {
+  if (wasActiveAdmin && !staysActiveAdmin && (await activeAdminCount()) <= 1) {
     return isSelf
       ? "You are the only active administrator — appoint another one before changing your own access."
       : "This is the last active administrator — appoint another one first.";

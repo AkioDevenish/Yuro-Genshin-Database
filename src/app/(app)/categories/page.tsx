@@ -19,7 +19,7 @@ export default async function CategoriesPage() {
       <TaxonomyManager
         kind="category"
         noun="Category"
-        entries={listCategories()}
+        entries={await listCategories()}
         canManage={can(user.role, "taxonomy.manage")}
       />
     </>

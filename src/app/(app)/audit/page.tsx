@@ -21,7 +21,7 @@ function styleFor(action: string) {
 
 export default async function AuditPage() {
   await requirePermission("audit.view");
-  const logs = listAuditLogs(200);
+  const logs = await listAuditLogs(200);
 
   return (
     <>

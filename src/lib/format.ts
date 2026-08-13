@@ -38,12 +38,15 @@ export function formatUnits(quantity: number, unit: string): string {
   return `${formatNumber(quantity)} ${plural}`;
 }
 
-/** SQLite stores `YYYY-MM-DD HH:MM:SS` in UTC; make it explicit before parsing. */
-function toDate(value: string): Date {
+export type Timestamp = string | Date;
+
+/** The driver hands back `Date` for timestamptz columns; strings may still arrive from forms. */
+function toDate(value: Timestamp): Date {
+  if (value instanceof Date) return value;
   return new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
 }
 
-export function formatDate(value: string | null | undefined): string {
+export function formatDate(value: Timestamp | null | undefined): string {
   if (!value) return "—";
   return toDate(value).toLocaleDateString("en-GB", {
     day: "2-digit",
@@ -52,7 +55,7 @@ export function formatDate(value: string | null | undefined): string {
   });
 }
 
-export function formatDateTime(value: string | null | undefined): string {
+export function formatDateTime(value: Timestamp | null | undefined): string {
   if (!value) return "—";
   return toDate(value).toLocaleString("en-GB", {
     day: "2-digit",
@@ -63,7 +66,7 @@ export function formatDateTime(value: string | null | undefined): string {
   });
 }
 
-export function relativeTime(value: string | null | undefined): string {
+export function relativeTime(value: Timestamp | null | undefined): string {
   if (!value) return "—";
   const diff = Date.now() - toDate(value).getTime();
   const minutes = Math.round(diff / 60000);

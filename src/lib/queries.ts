@@ -1,5 +1,5 @@
 import "server-only";
-import { db } from "./db";
+import { sql } from "./db";
 import type { Role } from "./roles";
 
 export type ItemRow = {
@@ -16,8 +16,8 @@ export type ItemRow = {
   min_quantity: number;
   unit_cost: number;
   supplier: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: Date;
+  updated_at: Date;
 };
 
 export type MovementRow = {
@@ -30,7 +30,7 @@ export type MovementRow = {
   quantity: number;
   balance_after: number;
   note: string | null;
-  created_at: string;
+  created_at: Date;
 };
 
 export type UserRow = {
@@ -39,20 +39,27 @@ export type UserRow = {
   email: string;
   role: Role;
   status: "ACTIVE" | "DISABLED";
-  created_at: string;
-  last_login_at: string | null;
+  created_at: Date;
+  last_login_at: Date | null;
 };
 
 export type TaxonomyRow = {
   id: number;
   name: string;
   description: string | null;
-  created_at: string;
+  created_at: Date;
   item_count: number;
 };
 
+/**
+ * `unit_cost` is NUMERIC in the database, which the driver hands back as a
+ * string; every read casts it to float8 so the app always sees a number.
+ */
 const ITEM_SELECT = `
-  SELECT i.*, c.name AS category_name, l.name AS location_name
+  SELECT i.id, i.sku, i.name, i.description, i.category_id, i.location_id,
+         i.unit, i.quantity, i.min_quantity, i.unit_cost::float8 AS unit_cost,
+         i.supplier, i.created_at, i.updated_at,
+         c.name AS category_name, l.name AS location_name
   FROM items i
   LEFT JOIN categories c ON c.id = i.category_id
   LEFT JOIN locations  l ON l.id = i.location_id
@@ -66,21 +73,23 @@ export type ItemFilters = {
   sort?: "name" | "quantity" | "value" | "updated";
 };
 
-export function listItems(filters: ItemFilters = {}): ItemRow[] {
+export async function listItems(filters: ItemFilters = {}): Promise<ItemRow[]> {
   const where: string[] = [];
   const params: unknown[] = [];
 
   if (filters.search) {
-    where.push("(i.name LIKE ? OR i.sku LIKE ? OR i.supplier LIKE ? OR i.description LIKE ?)");
-    const needle = `%${filters.search}%`;
-    params.push(needle, needle, needle, needle);
+    const n = params.length;
+    where.push(
+      `(i.name ILIKE $${n + 1} OR i.sku ILIKE $${n + 1} OR i.supplier ILIKE $${n + 1} OR i.description ILIKE $${n + 1})`,
+    );
+    params.push(`%${filters.search}%`);
   }
   if (filters.categoryId) {
-    where.push("i.category_id = ?");
+    where.push(`i.category_id = $${params.length + 1}`);
     params.push(filters.categoryId);
   }
   if (filters.locationId) {
-    where.push("i.location_id = ?");
+    where.push(`i.location_id = $${params.length + 1}`);
     params.push(filters.locationId);
   }
   if (filters.stock === "low") where.push("i.quantity > 0 AND i.quantity <= i.min_quantity");
@@ -93,74 +102,72 @@ export function listItems(filters: ItemFilters = {}): ItemRow[] {
         ? "(i.quantity * i.unit_cost) DESC"
         : filters.sort === "updated"
           ? "i.updated_at DESC"
-          : "i.name COLLATE NOCASE ASC";
+          : "lower(i.name) ASC";
 
-  const sql = `${ITEM_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${orderBy}`;
-  return db.prepare(sql).all(...params) as ItemRow[];
+  const query = `${ITEM_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${orderBy}`;
+  return sql.unsafe<ItemRow[]>(query, params as never[]);
 }
 
-export function getItem(id: number): ItemRow | undefined {
-  return db.prepare(`${ITEM_SELECT} WHERE i.id = ?`).get(id) as ItemRow | undefined;
+export async function getItem(id: number): Promise<ItemRow | undefined> {
+  const rows = await sql.unsafe<ItemRow[]>(`${ITEM_SELECT} WHERE i.id = $1`, [id] as never[]);
+  return rows[0];
 }
 
-export function listMovements(options: { itemId?: number; limit?: number } = {}): MovementRow[] {
-  const where = options.itemId ? "WHERE m.item_id = ?" : "";
-  const params = options.itemId ? [options.itemId] : [];
-  return db
-    .prepare(
-      `SELECT m.*, i.name AS item_name, i.sku AS item_sku, u.name AS user_name
-       FROM movements m
-       JOIN items i ON i.id = m.item_id
-       LEFT JOIN users u ON u.id = m.user_id
-       ${where}
-       ORDER BY m.created_at DESC, m.id DESC
-       LIMIT ?`,
-    )
-    .all(...params, options.limit ?? 50) as MovementRow[];
+export async function listMovements(
+  options: { itemId?: number; limit?: number } = {},
+): Promise<MovementRow[]> {
+  const limit = options.limit ?? 50;
+  if (options.itemId) {
+    return sql<MovementRow[]>`
+      SELECT m.*, i.name AS item_name, i.sku AS item_sku, u.name AS user_name
+      FROM movements m
+      JOIN items i ON i.id = m.item_id
+      LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.item_id = ${options.itemId}
+      ORDER BY m.created_at DESC, m.id DESC
+      LIMIT ${limit}`;
+  }
+  return sql<MovementRow[]>`
+    SELECT m.*, i.name AS item_name, i.sku AS item_sku, u.name AS user_name
+    FROM movements m
+    JOIN items i ON i.id = m.item_id
+    LEFT JOIN users u ON u.id = m.user_id
+    ORDER BY m.created_at DESC, m.id DESC
+    LIMIT ${limit}`;
 }
 
-export function listCategories(): TaxonomyRow[] {
-  return db
-    .prepare(
-      `SELECT c.*, (SELECT COUNT(*) FROM items i WHERE i.category_id = c.id) AS item_count
-       FROM categories c ORDER BY c.name COLLATE NOCASE`,
-    )
-    .all() as TaxonomyRow[];
+export async function listCategories(): Promise<TaxonomyRow[]> {
+  return sql<TaxonomyRow[]>`
+    SELECT c.*, (SELECT COUNT(*)::int FROM items i WHERE i.category_id = c.id) AS item_count
+    FROM categories c ORDER BY lower(c.name)`;
 }
 
-export function listLocations(): TaxonomyRow[] {
-  return db
-    .prepare(
-      `SELECT l.*, (SELECT COUNT(*) FROM items i WHERE i.location_id = l.id) AS item_count
-       FROM locations l ORDER BY l.name COLLATE NOCASE`,
-    )
-    .all() as TaxonomyRow[];
+export async function listLocations(): Promise<TaxonomyRow[]> {
+  return sql<TaxonomyRow[]>`
+    SELECT l.*, (SELECT COUNT(*)::int FROM items i WHERE i.location_id = l.id) AS item_count
+    FROM locations l ORDER BY lower(l.name)`;
 }
 
-export function listUsers(): UserRow[] {
-  return db
-    .prepare(
-      `SELECT id, name, email, role, status, created_at, last_login_at
-       FROM users ORDER BY name COLLATE NOCASE`,
-    )
-    .all() as UserRow[];
+export async function listUsers(): Promise<UserRow[]> {
+  return sql<UserRow[]>`
+    SELECT id, name, email, role, status, created_at, last_login_at
+    FROM users ORDER BY lower(name)`;
 }
 
-export function listAuditLogs(limit = 100) {
-  return db
-    .prepare(
-      `SELECT id, user_label, action, entity, entity_id, details, created_at
-       FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT ?`,
-    )
-    .all(limit) as {
-    id: number;
-    user_label: string | null;
-    action: string;
-    entity: string;
-    entity_id: string | null;
-    details: string | null;
-    created_at: string;
-  }[];
+export type AuditRow = {
+  id: number;
+  user_label: string | null;
+  action: string;
+  entity: string;
+  entity_id: string | null;
+  details: string | null;
+  created_at: Date;
+};
+
+export async function listAuditLogs(limit = 100): Promise<AuditRow[]> {
+  return sql<AuditRow[]>`
+    SELECT id, user_label, action, entity, entity_id, details, created_at
+    FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT ${limit}`;
 }
 
 export type DashboardStats = {
@@ -175,85 +182,65 @@ export type DashboardStats = {
   movementsThisWeek: number;
 };
 
-export function dashboardStats(): DashboardStats {
-  const totals = db
-    .prepare(
-      `SELECT COUNT(*) AS totalItems,
-              COALESCE(SUM(quantity), 0) AS totalUnits,
-              COALESCE(SUM(quantity * unit_cost), 0) AS totalValue,
-              COALESCE(SUM(CASE WHEN quantity > 0 AND quantity <= min_quantity THEN 1 ELSE 0 END), 0) AS lowStock,
-              COALESCE(SUM(CASE WHEN quantity = 0 THEN 1 ELSE 0 END), 0) AS outOfStock
-       FROM items`,
-    )
-    .get() as Omit<
-    DashboardStats,
-    "categories" | "locations" | "activeUsers" | "movementsThisWeek"
-  >;
-
-  const counts = db
-    .prepare(
-      `SELECT (SELECT COUNT(*) FROM categories) AS categories,
-              (SELECT COUNT(*) FROM locations) AS locations,
-              (SELECT COUNT(*) FROM users WHERE status = 'ACTIVE') AS activeUsers,
-              (SELECT COUNT(*) FROM movements WHERE created_at >= datetime('now', '-7 days')) AS movementsThisWeek`,
-    )
-    .get() as Pick<
-    DashboardStats,
-    "categories" | "locations" | "activeUsers" | "movementsThisWeek"
-  >;
-
-  return { ...totals, ...counts };
+export async function dashboardStats(): Promise<DashboardStats> {
+  const [row] = await sql<DashboardStats[]>`
+    SELECT
+      (SELECT COUNT(*)::int FROM items) AS "totalItems",
+      (SELECT COALESCE(SUM(quantity), 0)::int FROM items) AS "totalUnits",
+      (SELECT COALESCE(SUM(quantity * unit_cost), 0)::float8 FROM items) AS "totalValue",
+      (SELECT COUNT(*)::int FROM items WHERE quantity > 0 AND quantity <= min_quantity) AS "lowStock",
+      (SELECT COUNT(*)::int FROM items WHERE quantity = 0) AS "outOfStock",
+      (SELECT COUNT(*)::int FROM categories) AS categories,
+      (SELECT COUNT(*)::int FROM locations) AS locations,
+      (SELECT COUNT(*)::int FROM users WHERE status = 'ACTIVE') AS "activeUsers",
+      (SELECT COUNT(*)::int FROM movements WHERE created_at >= now() - interval '7 days')
+        AS "movementsThisWeek"`;
+  return row;
 }
 
-export function stockByCategory() {
-  return db
-    .prepare(
-      `SELECT COALESCE(c.name, 'Uncategorised') AS name,
-              COUNT(i.id) AS items,
-              COALESCE(SUM(i.quantity), 0) AS units,
-              COALESCE(SUM(i.quantity * i.unit_cost), 0) AS value
-       FROM items i
-       LEFT JOIN categories c ON c.id = i.category_id
-       GROUP BY c.id
-       ORDER BY value DESC`,
-    )
-    .all() as { name: string; items: number; units: number; value: number }[];
+export type BreakdownRow = { name: string; items: number; units: number; value: number };
+
+export async function stockByCategory(): Promise<BreakdownRow[]> {
+  return sql<BreakdownRow[]>`
+    SELECT COALESCE(c.name, 'Uncategorised') AS name,
+           COUNT(i.id)::int AS items,
+           COALESCE(SUM(i.quantity), 0)::int AS units,
+           COALESCE(SUM(i.quantity * i.unit_cost), 0)::float8 AS value
+    FROM items i
+    LEFT JOIN categories c ON c.id = i.category_id
+    GROUP BY c.id, c.name
+    ORDER BY value DESC`;
 }
 
-export function stockByLocation() {
-  return db
-    .prepare(
-      `SELECT COALESCE(l.name, 'Unassigned') AS name,
-              COUNT(i.id) AS items,
-              COALESCE(SUM(i.quantity), 0) AS units,
-              COALESCE(SUM(i.quantity * i.unit_cost), 0) AS value
-       FROM items i
-       LEFT JOIN locations l ON l.id = i.location_id
-       GROUP BY l.id
-       ORDER BY value DESC`,
-    )
-    .all() as { name: string; items: number; units: number; value: number }[];
+export async function stockByLocation(): Promise<BreakdownRow[]> {
+  return sql<BreakdownRow[]>`
+    SELECT COALESCE(l.name, 'Unassigned') AS name,
+           COUNT(i.id)::int AS items,
+           COALESCE(SUM(i.quantity), 0)::int AS units,
+           COALESCE(SUM(i.quantity * i.unit_cost), 0)::float8 AS value
+    FROM items i
+    LEFT JOIN locations l ON l.id = i.location_id
+    GROUP BY l.id, l.name
+    ORDER BY value DESC`;
 }
 
-export function movementTrend(days = 14) {
-  return db
-    .prepare(
-      `SELECT date(created_at) AS day,
-              COALESCE(SUM(CASE WHEN type = 'IN' THEN quantity ELSE 0 END), 0) AS inbound,
-              COALESCE(SUM(CASE WHEN type = 'OUT' THEN quantity ELSE 0 END), 0) AS outbound
-       FROM movements
-       WHERE created_at >= date('now', ?)
-       GROUP BY day
-       ORDER BY day`,
-    )
-    .all(`-${days} days`) as { day: string; inbound: number; outbound: number }[];
+export type TrendRow = { day: string; inbound: number; outbound: number };
+
+export async function movementTrend(days = 14): Promise<TrendRow[]> {
+  return sql<TrendRow[]>`
+    SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
+           COALESCE(SUM(CASE WHEN type = 'IN'  THEN quantity ELSE 0 END), 0)::int AS inbound,
+           COALESCE(SUM(CASE WHEN type = 'OUT' THEN quantity ELSE 0 END), 0)::int AS outbound
+    FROM movements
+    WHERE created_at >= now() - make_interval(days => ${days})
+    GROUP BY day
+    ORDER BY day`;
 }
 
-export function lowStockItems(limit = 8): ItemRow[] {
-  return db
-    .prepare(
-      `${ITEM_SELECT} WHERE i.quantity <= i.min_quantity
-       ORDER BY (i.quantity - i.min_quantity) ASC, i.name COLLATE NOCASE LIMIT ?`,
-    )
-    .all(limit) as ItemRow[];
+export async function lowStockItems(limit = 8): Promise<ItemRow[]> {
+  return sql.unsafe<ItemRow[]>(
+    `${ITEM_SELECT} WHERE i.quantity <= i.min_quantity
+     ORDER BY (i.quantity - i.min_quantity) ASC, lower(i.name) LIMIT $1`,
+    [limit] as never[],
+  );
 }

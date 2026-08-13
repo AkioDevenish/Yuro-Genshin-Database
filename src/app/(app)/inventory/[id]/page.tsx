@@ -15,17 +15,17 @@ type Params = Promise<{ id: string }>;
 
 export async function generateMetadata({ params }: { params: Params }) {
   const { id } = await params;
-  const item = getItem(Number(id));
+  const item = await getItem(Number(id));
   return { title: item?.name ?? "Item" };
 }
 
 export default async function ItemPage({ params }: { params: Params }) {
   const user = await requirePermission("inventory.view");
   const { id } = await params;
-  const item = getItem(Number(id));
+  const item = await getItem(Number(id));
   if (!item) notFound();
 
-  const movements = listMovements({ itemId: item.id, limit: 50 });
+  const movements = await listMovements({ itemId: item.id, limit: 50 });
   const canManage = can(user.role, "inventory.manage");
 
   const details = [
@@ -57,8 +57,8 @@ export default async function ItemPage({ params }: { params: Params }) {
             <>
               <EditItemButton
                 item={item}
-                categories={listCategories().map((c) => ({ id: c.id, name: c.name }))}
-                locations={listLocations().map((l) => ({ id: l.id, name: l.name }))}
+                categories={(await listCategories()).map((c) => ({ id: c.id, name: c.name }))}
+                locations={(await listLocations()).map((l) => ({ id: l.id, name: l.name }))}
               />
               <DeleteItemButton id={item.id} name={item.name} />
             </>

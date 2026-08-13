@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { assertPermission, recordAudit } from "@/lib/auth";
 import { formatUnits } from "@/lib/format";
 
@@ -25,37 +25,41 @@ export async function recordMovementAction(
       return { error: "Enter a quantity greater than zero." };
     }
 
-    const item = db.prepare("SELECT id, name, sku, quantity, unit FROM items WHERE id = ?").get(
-      itemId,
-    ) as { id: number; name: string; sku: string; quantity: number; unit: string } | undefined;
+    const result = await sql.begin(async (tx) => {
+      // Lock the row so two people moving the same item cannot race each other.
+      const [item] = await tx<
+        { id: number; name: string; sku: string; quantity: number; unit: string }[]
+      >`SELECT id, name, sku, quantity, unit FROM items WHERE id = ${itemId} FOR UPDATE`;
 
-    if (!item) return { error: "That item no longer exists." };
+      if (!item) return { error: "That item no longer exists." };
 
-    // ADJUST sets the balance outright; IN/OUT move it relative to what is there.
-    const balanceAfter =
-      type === "IN" ? item.quantity + amount : type === "OUT" ? item.quantity - amount : amount;
+      // ADJUST sets the balance outright; IN/OUT move it relative to what is there.
+      const balanceAfter =
+        type === "IN" ? item.quantity + amount : type === "OUT" ? item.quantity - amount : amount;
 
-    if (balanceAfter < 0) {
-      return {
-        error: `Only ${formatUnits(item.quantity, item.unit)} of ${item.name} are on hand — you cannot issue ${amount}.`,
-      };
-    }
+      if (balanceAfter < 0) {
+        return {
+          error: `Only ${formatUnits(item.quantity, item.unit)} of ${item.name} are on hand — you cannot issue ${amount}.`,
+        };
+      }
 
-    const delta = balanceAfter - item.quantity;
+      const delta = balanceAfter - item.quantity;
 
-    db.transaction(() => {
-      db.prepare(
-        `INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(itemId, user.userId, type, type === "ADJUST" ? delta : amount, balanceAfter, note || null);
+      await tx`
+        INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note)
+        VALUES (${itemId}, ${user.userId}, ${type}, ${type === "ADJUST" ? delta : amount},
+                ${balanceAfter}, ${note || null})`;
 
-      db.prepare("UPDATE items SET quantity = ?, updated_at = datetime('now') WHERE id = ?").run(
-        balanceAfter,
-        itemId,
-      );
-    })();
+      await tx`UPDATE items SET quantity = ${balanceAfter}, updated_at = now() WHERE id = ${itemId}`;
 
-    recordAudit({
+      return { item, balanceAfter };
+    });
+
+    if ("error" in result) return { error: result.error };
+
+    const { item, balanceAfter } = result;
+
+    await recordAudit({
       user,
       action: `MOVEMENT_${type}`,
       entity: "item",

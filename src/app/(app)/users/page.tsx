@@ -20,7 +20,7 @@ const PERMISSION_LABELS: Record<string, string> = {
 
 export default async function UsersPage() {
   const admin = await requirePermission("users.manage");
-  const users = listUsers();
+  const users = await listUsers();
 
   return (
     <>

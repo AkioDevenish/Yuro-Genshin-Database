@@ -29,9 +29,9 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
     sort: (one(params.sort) as ItemFilters["sort"]) ?? "name",
   };
 
-  const items = listItems(filters);
-  const categories = listCategories();
-  const locations = listLocations();
+  const items = await listItems(filters);
+  const categories = await listCategories();
+  const locations = await listLocations();
   const totalValue = items.reduce((sum, i) => sum + i.quantity * i.unit_cost, 0);
 
   const exportQuery = new URLSearchParams();

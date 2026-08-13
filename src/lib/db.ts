@@ -1,33 +1,42 @@
-import Database from "better-sqlite3";
-import fs from "node:fs";
-import path from "node:path";
-import { SCHEMA_SQL } from "./schema.mjs";
+import postgres from "postgres";
 
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(process.cwd(), "data");
+function connectionString(): string {
+  const url =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL || // set automatically by Vercel Postgres / Neon integrations
+    "";
 
-const DB_FILE = path.join(DATA_DIR, "inventory.db");
-
-function createConnection() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const db = new Database(DB_FILE);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  migrate(db);
-  return db;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is not set. Point it at your PostgreSQL database, e.g.\n" +
+        "  postgresql://user:password@host/dbname?sslmode=require",
+    );
+  }
+  return url;
 }
 
-function migrate(db: Database.Database) {
-  db.exec(SCHEMA_SQL);
+function createClient() {
+  return postgres(connectionString(), {
+    // Serverless platforms run many short-lived instances, so each one keeps a
+    // single connection rather than a pool that would exhaust the server.
+    max: process.env.VERCEL ? 1 : 10,
+    idle_timeout: 20,
+    connect_timeout: 15,
+    // Transaction-mode poolers (Supabase :6543, Neon -pooler) cannot use named
+    // prepared statements.
+    prepare: false,
+    onnotice: () => {},
+  });
 }
 
-// Next.js dev mode re-evaluates modules on every hot reload; cache the handle on
-// globalThis so we never open more than one connection per process.
-const globalForDb = globalThis as unknown as { __iicaDb?: Database.Database };
+// Next.js re-evaluates modules on every hot reload in development; cache the
+// client on globalThis so we never open more connections than intended.
+const globalForDb = globalThis as unknown as {
+  __iicaSql?: ReturnType<typeof createClient>;
+};
 
-export const db: Database.Database = globalForDb.__iicaDb ?? createConnection();
+export const sql = globalForDb.__iicaSql ?? createClient();
 
 if (process.env.NODE_ENV !== "production") {
-  globalForDb.__iicaDb = db;
+  globalForDb.__iicaSql = sql;
 }

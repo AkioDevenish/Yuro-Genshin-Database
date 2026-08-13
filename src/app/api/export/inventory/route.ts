@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     "Last updated",
   ];
 
-  const rows = listItems(filters).map((item) => [
+  const rows = (await listItems(filters)).map((item) => [
     item.sku,
     item.name,
     item.category_name ?? "",

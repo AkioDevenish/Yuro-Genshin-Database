@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { db } from "./db";
+import { sql } from "./db";
 import { SESSION_COOKIE, readSession, type SessionPayload } from "./session";
 import { can, type Permission } from "./roles";
 
@@ -13,11 +13,9 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   const session = await readSession(store.get(SESSION_COOKIE)?.value);
   if (!session) return null;
 
-  const row = db
-    .prepare("SELECT id, name, email, role, status FROM users WHERE id = ?")
-    .get(session.userId) as
-    | { id: number; name: string; email: string; role: string; status: string }
-    | undefined;
+  const [row] = await sql<
+    { id: number; name: string; email: string; role: string; status: string }[]
+  >`SELECT id, name, email, role, status FROM users WHERE id = ${session.userId}`;
 
   if (!row || row.status !== "ACTIVE") return null;
 
@@ -52,22 +50,21 @@ export async function assertPermission(permission: Permission): Promise<CurrentU
   return user;
 }
 
-export function recordAudit(input: {
+export async function recordAudit(input: {
   user: CurrentUser | null;
   action: string;
   entity: string;
   entityId?: string | number | null;
   details?: string | null;
-}) {
-  db.prepare(
-    `INSERT INTO audit_logs (user_id, user_label, action, entity, entity_id, details)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(
-    input.user?.userId ?? null,
-    input.user ? `${input.user.name} (${input.user.email})` : "system",
-    input.action,
-    input.entity,
-    input.entityId == null ? null : String(input.entityId),
-    input.details ?? null,
-  );
+}): Promise<void> {
+  await sql`
+    INSERT INTO audit_logs (user_id, user_label, action, entity, entity_id, details)
+    VALUES (
+      ${input.user?.userId ?? null},
+      ${input.user ? `${input.user.name} (${input.user.email})` : "system"},
+      ${input.action},
+      ${input.entity},
+      ${input.entityId == null ? null : String(input.entityId)},
+      ${input.details ?? null}
+    )`;
 }

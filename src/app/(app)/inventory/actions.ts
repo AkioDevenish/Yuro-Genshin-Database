@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { db } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { assertPermission, recordAudit } from "@/lib/auth";
 
 export type FormState = { error?: string; ok?: boolean };
@@ -47,38 +47,25 @@ export async function createItemAction(_prev: FormState, formData: FormData): Pr
     const sku = text(formData, "sku").toUpperCase();
     const quantity = intOf(formData, "quantity");
 
-    const insert = db.prepare(
-      `INSERT INTO items (sku, name, description, category_id, location_id, unit, quantity,
-                          min_quantity, unit_cost, supplier)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    const result = db.transaction(() => {
-      const info = insert.run(
-        sku,
-        text(formData, "name"),
-        text(formData, "description") || null,
-        optionalId(formData, "category_id"),
-        optionalId(formData, "location_id"),
-        text(formData, "unit") || "unit",
-        quantity,
-        intOf(formData, "min_quantity"),
-        floatOf(formData, "unit_cost"),
-        text(formData, "supplier") || null,
-      );
-      const id = Number(info.lastInsertRowid);
+    newId = await sql.begin(async (tx) => {
+      const [item] = await tx<{ id: number }[]>`
+        INSERT INTO items (sku, name, description, category_id, location_id, unit, quantity,
+                           min_quantity, unit_cost, supplier)
+        VALUES (${sku}, ${text(formData, "name")}, ${text(formData, "description") || null},
+                ${optionalId(formData, "category_id")}, ${optionalId(formData, "location_id")},
+                ${text(formData, "unit") || "unit"}, ${quantity}, ${intOf(formData, "min_quantity")},
+                ${floatOf(formData, "unit_cost")}, ${text(formData, "supplier") || null})
+        RETURNING id`;
 
       if (quantity > 0) {
-        db.prepare(
-          `INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note)
-           VALUES (?, ?, 'IN', ?, ?, 'Opening balance')`,
-        ).run(id, user.userId, quantity, quantity);
+        await tx`
+          INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note)
+          VALUES (${item.id}, ${user.userId}, 'IN', ${quantity}, ${quantity}, 'Opening balance')`;
       }
-      return id;
-    })();
+      return item.id;
+    });
 
-    newId = result;
-    recordAudit({
+    await recordAudit({
       user,
       action: "CREATE",
       entity: "item",
@@ -103,44 +90,37 @@ export async function updateItemAction(_prev: FormState, formData: FormData): Pr
     const problem = validate(formData);
     if (problem) return { error: problem };
 
-    const existing = db.prepare("SELECT quantity FROM items WHERE id = ?").get(id) as
-      | { quantity: number }
-      | undefined;
+    const [existing] = await sql<{ quantity: number }[]>`
+      SELECT quantity FROM items WHERE id = ${id}`;
     if (!existing) return { error: "That item no longer exists." };
 
     const quantity = intOf(formData, "quantity");
     const sku = text(formData, "sku").toUpperCase();
 
-    db.transaction(() => {
-      db.prepare(
-        `UPDATE items SET sku = ?, name = ?, description = ?, category_id = ?, location_id = ?,
-                          unit = ?, quantity = ?, min_quantity = ?, unit_cost = ?, supplier = ?,
-                          updated_at = datetime('now')
-         WHERE id = ?`,
-      ).run(
-        sku,
-        text(formData, "name"),
-        text(formData, "description") || null,
-        optionalId(formData, "category_id"),
-        optionalId(formData, "location_id"),
-        text(formData, "unit") || "unit",
-        quantity,
-        intOf(formData, "min_quantity"),
-        floatOf(formData, "unit_cost"),
-        text(formData, "supplier") || null,
-        id,
-      );
+    await sql.begin(async (tx) => {
+      await tx`
+        UPDATE items SET sku = ${sku}, name = ${text(formData, "name")},
+                         description = ${text(formData, "description") || null},
+                         category_id = ${optionalId(formData, "category_id")},
+                         location_id = ${optionalId(formData, "location_id")},
+                         unit = ${text(formData, "unit") || "unit"},
+                         quantity = ${quantity},
+                         min_quantity = ${intOf(formData, "min_quantity")},
+                         unit_cost = ${floatOf(formData, "unit_cost")},
+                         supplier = ${text(formData, "supplier") || null},
+                         updated_at = now()
+        WHERE id = ${id}`;
 
       // Editing the quantity directly is a correction — keep the ledger honest.
       if (quantity !== existing.quantity) {
-        db.prepare(
-          `INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note)
-           VALUES (?, ?, 'ADJUST', ?, ?, 'Corrected while editing the item')`,
-        ).run(id, user.userId, quantity - existing.quantity, quantity);
+        await tx`
+          INSERT INTO movements (item_id, user_id, type, quantity, balance_after, note)
+          VALUES (${id}, ${user.userId}, 'ADJUST', ${quantity - existing.quantity}, ${quantity},
+                  'Corrected while editing the item')`;
       }
-    })();
+    });
 
-    recordAudit({ user, action: "UPDATE", entity: "item", entityId: id, details: sku });
+    await recordAudit({ user, action: "UPDATE", entity: "item", entityId: id, details: sku });
   } catch (error) {
     return { error: describe(error, "That SKU is already in use.") };
   }
@@ -153,13 +133,13 @@ export async function updateItemAction(_prev: FormState, formData: FormData): Pr
 export async function deleteItemAction(formData: FormData) {
   const user = await assertPermission("inventory.manage");
   const id = intOf(formData, "id");
-  const item = db.prepare("SELECT sku, name FROM items WHERE id = ?").get(id) as
-    | { sku: string; name: string }
-    | undefined;
+
+  const [item] = await sql<{ sku: string; name: string }[]>`
+    SELECT sku, name FROM items WHERE id = ${id}`;
 
   if (item) {
-    db.prepare("DELETE FROM items WHERE id = ?").run(id);
-    recordAudit({
+    await sql`DELETE FROM items WHERE id = ${id}`;
+    await recordAudit({
       user,
       action: "DELETE",
       entity: "item",
@@ -175,6 +155,9 @@ export async function deleteItemAction(formData: FormData) {
 
 function describe(error: unknown, uniqueMessage: string): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("UNIQUE constraint failed")) return uniqueMessage;
+  // Postgres unique_violation
+  if ((error as { code?: string })?.code === "23505" || message.includes("duplicate key value")) {
+    return uniqueMessage;
+  }
   return message || "Something went wrong. Please try again.";
 }

@@ -12,8 +12,8 @@ export const metadata = { title: "Stock movements" };
 
 export default async function MovementsPage() {
   const user = await requirePermission("inventory.view");
-  const movements = listMovements({ limit: 100 });
-  const items = listItems().map((i) => ({
+  const movements = await listMovements({ limit: 100 });
+  const items = (await listItems()).map((i) => ({
     id: i.id,
     name: i.name,
     sku: i.sku,

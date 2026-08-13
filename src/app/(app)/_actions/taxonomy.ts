@@ -1,15 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { sql } from "@/lib/db";
 import { assertPermission, recordAudit } from "@/lib/auth";
 
 export type TaxonomyKind = "category" | "location";
 export type TaxonomyState = { error?: string; ok?: boolean };
 
-const TABLES: Record<TaxonomyKind, { table: string; path: string }> = {
-  category: { table: "categories", path: "/categories" },
-  location: { table: "locations", path: "/locations" },
+const PATHS: Record<TaxonomyKind, string> = {
+  category: "/categories",
+  location: "/locations",
 };
 
 function kindOf(formData: FormData): TaxonomyKind {
@@ -23,7 +23,6 @@ export async function saveTaxonomyAction(
   try {
     const user = await assertPermission("taxonomy.manage");
     const kind = kindOf(formData);
-    const { table, path } = TABLES[kind];
 
     const id = Number(formData.get("id")) || null;
     const name = String(formData.get("name") ?? "").trim();
@@ -32,34 +31,39 @@ export async function saveTaxonomyAction(
     if (!name) return { error: "Enter a name." };
 
     if (id) {
-      db.prepare(`UPDATE ${table} SET name = ?, description = ? WHERE id = ?`).run(
-        name,
-        description,
-        id,
-      );
-      recordAudit({ user, action: "UPDATE", entity: kind, entityId: id, details: name });
+      // The table name is not user input — it comes from the two-value union above.
+      if (kind === "category") {
+        await sql`UPDATE categories SET name = ${name}, description = ${description} WHERE id = ${id}`;
+      } else {
+        await sql`UPDATE locations SET name = ${name}, description = ${description} WHERE id = ${id}`;
+      }
+      await recordAudit({ user, action: "UPDATE", entity: kind, entityId: id, details: name });
     } else {
-      const info = db
-        .prepare(`INSERT INTO ${table} (name, description) VALUES (?, ?)`)
-        .run(name, description);
-      recordAudit({
+      const [row] =
+        kind === "category"
+          ? await sql<{ id: number }[]>`
+              INSERT INTO categories (name, description) VALUES (${name}, ${description})
+              RETURNING id`
+          : await sql<{ id: number }[]>`
+              INSERT INTO locations (name, description) VALUES (${name}, ${description})
+              RETURNING id`;
+      await recordAudit({
         user,
         action: "CREATE",
         entity: kind,
-        entityId: Number(info.lastInsertRowid),
+        entityId: row.id,
         details: name,
       });
     }
 
-    revalidatePath(path);
+    revalidatePath(PATHS[kind]);
     revalidatePath("/inventory");
     return { ok: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("UNIQUE constraint failed")) {
+    if ((error as { code?: string })?.code === "23505") {
       return { error: "Something with that name already exists." };
     }
-    return { error: message || "Could not save." };
+    return { error: error instanceof Error ? error.message : "Could not save." };
   }
 }
 
@@ -70,22 +74,20 @@ export async function deleteTaxonomyAction(
   try {
     const user = await assertPermission("taxonomy.manage");
     const kind = kindOf(formData);
-    const { table, path } = TABLES[kind];
     const id = Number(formData.get("id"));
     if (!id) return { error: "Nothing selected." };
 
-    const row = db.prepare(`SELECT name FROM ${table} WHERE id = ?`).get(id) as
-      | { name: string }
-      | undefined;
-
     // Items keep existing — the schema sets their foreign key to NULL.
-    db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    const [row] =
+      kind === "category"
+        ? await sql<{ name: string }[]>`DELETE FROM categories WHERE id = ${id} RETURNING name`
+        : await sql<{ name: string }[]>`DELETE FROM locations WHERE id = ${id} RETURNING name`;
 
     if (row) {
-      recordAudit({ user, action: "DELETE", entity: kind, entityId: id, details: row.name });
+      await recordAudit({ user, action: "DELETE", entity: kind, entityId: id, details: row.name });
     }
 
-    revalidatePath(path);
+    revalidatePath(PATHS[kind]);
     revalidatePath("/inventory");
     return { ok: true };
   } catch (error) {
