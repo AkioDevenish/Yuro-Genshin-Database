@@ -1,0 +1,268 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #05070c;
+  --color-ink-900: #080b13;
+  --color-ink-850: #0b0f19;
+  --color-ink-800: #10141f;
+  --color-ink-700: #171c2a;
+  --color-ink-600: #222839;
+
+  --color-brand-50: #ecfdf5;
+  --color-brand-200: #a7f3d0;
+  --color-brand-300: #6ee7b7;
+  --color-brand-400: #34d399;
+  --color-brand-500: #10b981;
+  --color-brand-600: #059669;
+  --color-brand-700: #047857;
+
+  --color-gold-300: #f4d58d;
+  --color-gold-400: #e9b949;
+
+  /* System stack — no web-font download, so the app works fully offline. */
+  --font-sans: "Inter var", Inter, ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas,
+    monospace;
+
+  --radius-xl2: 1.25rem;
+}
+
+:root {
+  color-scheme: dark;
+  --surface: rgba(255, 255, 255, 0.032);
+  --surface-strong: rgba(255, 255, 255, 0.055);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+}
+
+* {
+  border-color: var(--hairline);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-ink-950);
+  color: #e8ecf4;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient light that gives the whole shell its depth. */
+.app-aurora::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, rgba(16, 185, 129, 0.16), transparent 60%),
+    radial-gradient(50rem 34rem at 88% 0%, rgba(233, 185, 73, 0.09), transparent 62%),
+    radial-gradient(70rem 50rem at 50% 110%, rgba(59, 130, 246, 0.08), transparent 60%);
+}
+
+.panel {
+  background: linear-gradient(180deg, var(--surface-strong), var(--surface));
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl2);
+  backdrop-filter: blur(18px);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
+    0 24px 60px -32px rgba(0, 0, 0, 0.9);
+}
+
+.panel-flat {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 1rem;
+}
+
+.hairline {
+  border-color: var(--hairline);
+}
+
+.field {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--hairline-strong);
+  background: rgba(5, 7, 12, 0.6);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.875rem;
+  color: #e8ecf4;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.field::placeholder {
+  color: rgba(232, 236, 244, 0.35);
+}
+
+.field:focus {
+  border-color: var(--color-brand-500);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+  background: rgba(5, 7, 12, 0.85);
+}
+
+.field:disabled {
+  opacity: 0.5;
+}
+
+select.field option {
+  background: #0b0f19;
+  color: #e8ecf4;
+}
+
+.label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(232, 236, 244, 0.5);
+  margin-bottom: 0.4rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.75rem;
+  padding: 0.6rem 1.05rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: transform 0.12s ease, opacity 0.15s ease, background 0.15s ease,
+    border-color 0.15s ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--color-brand-400), var(--color-brand-600));
+  color: #04120c;
+  box-shadow: 0 10px 30px -14px rgba(16, 185, 129, 0.9);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--color-brand-300), var(--color-brand-500));
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--hairline-strong);
+  color: #e8ecf4;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.btn-danger {
+  background: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.35);
+  color: #fda4af;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  padding: 0.15rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.table-shell {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.table-shell thead th {
+  text-align: left;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(232, 236, 244, 0.45);
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.table-shell tbody td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+
+.table-shell tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-shell tbody tr {
+  transition: background 0.12s ease;
+}
+
+.table-shell tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.4s ease both;
+}
