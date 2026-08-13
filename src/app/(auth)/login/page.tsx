@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
 import { ShieldCheck, Boxes, History, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
+import { needsSetup } from "@/lib/setup";
 import { BrandLockup } from "@/components/brand";
 import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Sign in" };
+export const dynamic = "force-dynamic";
 
 const highlights = [
   {
@@ -25,6 +27,7 @@ const highlights = [
 ];
 
 export default async function LoginPage() {
+  if (await needsSetup()) redirect("/setup");
   if (await getCurrentUser()) redirect("/dashboard");
 
   return (

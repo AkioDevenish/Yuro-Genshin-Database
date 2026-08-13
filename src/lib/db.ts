@@ -1,5 +1,7 @@
 import postgres from "postgres";
 
+type Client = ReturnType<typeof postgres>;
+
 function connectionString(): string {
   const url =
     process.env.DATABASE_URL ||
@@ -15,7 +17,7 @@ function connectionString(): string {
   return url;
 }
 
-function createClient() {
+function createClient(): Client {
   return postgres(connectionString(), {
     // Serverless platforms run many short-lived instances, so each one keeps a
     // single connection rather than a pool that would exhaust the server.
@@ -31,12 +33,24 @@ function createClient() {
 
 // Next.js re-evaluates modules on every hot reload in development; cache the
 // client on globalThis so we never open more connections than intended.
-const globalForDb = globalThis as unknown as {
-  __iicaSql?: ReturnType<typeof createClient>;
-};
+const globalForDb = globalThis as unknown as { __iicaSql?: Client };
 
-export const sql = globalForDb.__iicaSql ?? createClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.__iicaSql = sql;
+function client(): Client {
+  globalForDb.__iicaSql ??= createClient();
+  return globalForDb.__iicaSql;
 }
+
+/**
+ * Connecting is deferred until the first query. Building the app therefore does
+ * not need a reachable database — or even DATABASE_URL — which matters because
+ * Next.js imports every route module while collecting page configuration.
+ */
+export const sql: Client = new Proxy((() => {}) as unknown as Client, {
+  apply(_target, _thisArg, args: unknown[]) {
+    return (client() as unknown as (...a: unknown[]) => unknown)(...args);
+  },
+  get(_target, property) {
+    const value = Reflect.get(client(), property);
+    return typeof value === "function" ? value.bind(client()) : value;
+  },
+});
